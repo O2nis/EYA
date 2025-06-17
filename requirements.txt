@@ -4,4 +4,4 @@ python-pptx
 pandas
 lxml
 openpyxl
-pyplot
+
