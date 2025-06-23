@@ -6,3 +6,6 @@ lxml
 openpyxl
 matplotlib
 plotly
+seaborn
+contextily
+requests
