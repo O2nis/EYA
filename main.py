@@ -20,6 +20,7 @@ from datetime import datetime
 import math
 import xyzservices.providers as xyz
 from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.ticker import NullFormatter
 
 # Initialize session state
 if 'generated_assets' not in st.session_state:
@@ -514,6 +515,67 @@ with tab1:
         except Exception:
             pass
         
+        # GAUSSIAN DISTRIBUTION CHART
+        st.subheader("Gaussian Distribution")
+        try:
+            gaussian_df = pd.read_excel(tmp_path, sheet_name="Gaussian distribution", header=None)
+            
+            # Extract line data starting from row 28
+            y_data = gaussian_df.iloc[27:, 3].dropna().astype(float).tolist()  # Column D (index 3)
+            x_data = gaussian_df.iloc[27:, 4].dropna().astype(float).tolist()  # Column E (index 4)
+            
+            # Extract the three special points from rows 20,21,22
+            points = []
+            # Columns I, J, K correspond to indices 8,9,10
+            y_columns = [8, 9, 10]  # I, J, K
+            row_indices = [19, 20, 21]  # Rows 20,21,22 (0-indexed 19,20,21)
+            
+            for row_idx, col_idx in zip(row_indices, y_columns):
+                # Get the first non-NA value in the column starting from row 28
+                col_values = gaussian_df.iloc[27:, col_idx].dropna()
+                if not col_values.empty:
+                    y_val = col_values.iloc[0]
+                    if not pd.isna(y_val):
+                        # Get x-value from column E and remove decimals
+                        x_val = gaussian_df.iloc[row_idx, 4]  # Column E
+                        # Format as integer by converting to int and then to string
+                        x_val_str = f"{int(x_val)}"
+                        label = f"{gaussian_df.iloc[row_idx, 1]}, {x_val_str}"  # B column + comma + E value (integer)
+                        points.append((x_val, y_val, label))
+            
+            # Create the plot
+            fig, ax = plt.subplots(figsize=(10, 6))
+            
+            # Plot the main Gaussian distribution line
+            sns.lineplot(x=x_data, y=y_data, ax=ax, linewidth=2.5, color='blue')
+            
+            # Plot the special points with annotations
+            for x, y, label in points:
+                ax.scatter(x, y, color='red', s=100, zorder=5)
+                ax.annotate(
+                    label,
+                    (x, y),
+                    xytext=(10, -15),
+                    textcoords='offset points',
+                    arrowprops=dict(arrowstyle='->', color='red', linewidth=1.5),
+                    fontsize=10,
+                    fontweight='bold',
+                    bbox=dict(boxstyle='round,pad=0.3', fc='white', alpha=0.8, ec='red')
+                )
+            
+            # Configure axes as requested
+            ax.set_xlabel("Energy Yield [kWh/kWp/a]", fontsize=12)
+            ax.set_ylabel("")  # Remove y-axis label
+            ax.yaxis.set_major_formatter(NullFormatter())  # Hide y-axis values
+            ax.set_title("Gaussian Distribution of Energy Yield", fontsize=14)
+            ax.grid(True, linestyle='--', alpha=0.7)
+            
+            st.pyplot(fig)
+            st.session_state.generated_assets['chart6'] = fig
+            
+        except Exception as e:
+            st.error(f"Error processing Gaussian distribution data: {str(e)}")
+        
         recap_dict = {}
         for i in range(len(recap_df)):
             key = str(recap_df.iloc[i, 0])
@@ -553,7 +615,7 @@ with tab2:
                 
                 charts_inserted = 0
                 tables_inserted = 0
-                for asset_key in ['chart1', 'chart2', 'chart3', 'chart4', 'chart5', 'table1_img', 'table2_img']:
+                for asset_key in ['chart1', 'chart2', 'chart3', 'chart4', 'chart5', 'chart6', 'table1_img', 'table2_img']:
                     if asset_key in st.session_state.generated_assets:
                         placeholder = search_docx_for_placeholder(doc, f"{{{asset_key}}}")
                         
@@ -600,7 +662,7 @@ with tab2:
                 
                 charts_inserted = 0
                 tables_inserted = 0
-                for asset_key in ['chart1', 'chart2', 'chart3', 'chart4', 'chart5', 'table1_img', 'table2_img']:
+                for asset_key in ['chart1', 'chart2', 'chart3', 'chart4', 'chart5', 'chart6', 'table1_img', 'table2_img']:
                     if asset_key in st.session_state.generated_assets:
                         slide, placeholder_shape = search_pptx_for_placeholder(prs, f"{{{asset_key}}}")
                         
