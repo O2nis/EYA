@@ -14,19 +14,22 @@ from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.enum.text import PP_ALIGN
-from pptx.enum.dml import MSO_THEME_COLOR
+from pptx.dml.color import RGBColor
 import calendar
 from datetime import datetime
 import math
 import xyzservices.providers as xyz
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.ticker import NullFormatter
+import cartopy.crs as ccrs
 
 # Initialize session state
 if 'generated_assets' not in st.session_state:
     st.session_state.generated_assets = {}
 if 'use_native_tables' not in st.session_state:
     st.session_state.use_native_tables = False
+if 'table_counter' not in st.session_state:
+    st.session_state.table_counter = 1
 
 # Page configuration
 st.set_page_config(layout="wide", page_title="Data Visualization and Reporting Tool")
@@ -129,7 +132,7 @@ def get_climate_data(latitude, longitude):
         return None, None, None
 
 def create_table_image(df):
-    """Create an image of a DataFrame as a table with compact rows and no padding"""
+    """Create an image of a DataFrame as a table with light blue headers and internal borders only"""
     df = df.copy()
     for col in df.columns:
         if df[col].dtype in ['float64', 'float32']:
@@ -156,9 +159,21 @@ def create_table_image(df):
     table.scale(1.0, 1.1)
     table.auto_set_column_width([i for i in range(n_cols)])
     
+    # Format cells - light blue header, internal borders only
     for (i, j), cell in table.get_celld().items():
+        # Header row formatting
         if i == 0:
+            cell.set_facecolor('#ADD8E6')  # Light blue
             cell.set_text_props(weight='bold')
+        
+        # Remove outer borders
+        if i == 0 or i == n_rows or j == 0 or j == n_cols - 1:
+            cell.set_edgecolor('none')
+        else:
+            cell.set_edgecolor('k')
+            cell.set_linewidth(0.5)
+        
+        # Set internal borders for all cells
         cell.set_height(0.12)
     
     buf = BytesIO()
@@ -199,13 +214,17 @@ def search_pptx_for_placeholder(prs, placeholder):
     return None, None
 
 def add_native_table_to_docx(doc, placeholder, df):
-    """Add native table to DOCX document at placeholder location"""
+    """Add native table to DOCX document at placeholder location with light blue headers and internal borders"""
+    from docx.oxml.ns import nsdecls
+    from docx.oxml import parse_xml
+    
     parent = placeholder._element.getparent()
     table = doc.add_table(rows=df.shape[0]+1, cols=df.shape[1])
     table.style = 'Table Grid'
     table.autofit = True
     table.allow_autofit = True
     
+    # Set light blue background for header row
     hdr_cells = table.rows[0].cells
     for i, col_name in enumerate(df.columns):
         hdr_cells[i].text = str(col_name)
@@ -214,7 +233,12 @@ def add_native_table_to_docx(doc, placeholder, df):
             for run in paragraph.runs:
                 run.bold = True
                 run.font.size = Pt(9)
+        
+        # Add light blue shading
+        shading_elm = parse_xml(r'<w:shd {} w:fill="ADD8E6"/>'.format(nsdecls('w')))
+        hdr_cells[i]._tc.get_or_add_tcPr().append(shading_elm)
     
+    # Add data rows
     for i in range(df.shape[0]):
         row_cells = table.rows[i+1].cells
         for j in range(df.shape[1]):
@@ -225,11 +249,23 @@ def add_native_table_to_docx(doc, placeholder, df):
                 for run in paragraph.runs:
                     run.font.size = Pt(8)
     
+    # Remove outer borders
+    tbl_pr = table._element.tblPr
+    tbl_borders = parse_xml(r'<w:tblBorders xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                            r'<w:top w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+                            r'<w:left w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+                            r'<w:bottom w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+                            r'<w:right w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+                            r'<w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+                            r'<w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+                            r'</w:tblBorders>')
+    tbl_pr.append(tbl_borders)
+    
     table_element = table._element
     parent.replace(placeholder._element, table_element)
 
 def add_native_table_to_pptx(slide, placeholder_shape, df):
-    """Add native table to PPTX slide at placeholder location"""
+    """Add native table to PPTX slide at placeholder location with light blue headers and internal borders"""
     left = placeholder_shape.left
     top = placeholder_shape.top
     width = placeholder_shape.width
@@ -238,6 +274,7 @@ def add_native_table_to_pptx(slide, placeholder_shape, df):
     rows, cols = df.shape[0]+1, df.shape[1]
     table_shape = slide.shapes.add_table(rows, cols, left, top, width, height).table
     
+    # Header row with light blue background
     for j in range(cols):
         cell = table_shape.cell(0, j)
         cell.text = str(df.columns[j])
@@ -246,7 +283,11 @@ def add_native_table_to_pptx(slide, placeholder_shape, df):
             for run in paragraph.runs:
                 run.font.bold = True
                 run.font.size = Pt(10)
+        # Set fill to light blue
+        cell.fill.solid()
+        cell.fill.fore_color.rgb = RGBColor(173, 216, 230)  # #ADD8E6
     
+    # Data rows
     for i in range(df.shape[0]):
         for j in range(df.shape[1]):
             cell = table_shape.cell(i+1, j)
@@ -255,6 +296,25 @@ def add_native_table_to_pptx(slide, placeholder_shape, df):
                 paragraph.alignment = PP_ALIGN.CENTER
                 for run in paragraph.runs:
                     run.font.size = Pt(9)
+    
+    # Remove outer borders and set internal borders
+    for row_idx in range(rows):
+        for col_idx in range(cols):
+            cell = table_shape.cell(row_idx, col_idx)
+            
+            # Remove all borders first
+            for border in [cell.top, cell.bottom, cell.left, cell.right]:
+                border.line_style = None
+            
+            # Add internal horizontal borders
+            if row_idx < rows - 1:
+                cell.bottom.line_style = 1
+                cell.bottom.width = Pt(0.5)
+            
+            # Add internal vertical borders
+            if col_idx < cols - 1:
+                cell.right.line_style = 1
+                cell.right.width = Pt(0.5)
 
 def replace_text_in_docx(doc, replacements):
     """Replace placeholders in DOCX paragraphs and table cells"""
@@ -329,18 +389,16 @@ with tab1:
                 "OpenStreetMap",
                 "CartoDB Positron",
                 "CartoDB Voyager",
-                "Nasa Terra",
-                "Nasa Topo",
-                "Esri World Imagery",
+                "Esri WorldTopoMap",
+                "Esri WorldImagery",
                 "OpenTopoMap",
-                "OpenStreetMap (DE)",
                 "CyclOSM",
-                "OpenStreetMap (HOT)"
+                "Open Infrastructure Map (Power)"  # Added power infrastructure map
             ]
         )
         zoom_level = st.sidebar.slider("Zoom Level", 5, 18, 12)
         marker_color = st.sidebar.color_picker("Marker Color", "#ff0000")
-        marker_size = st.sidebar.slider("Marker Size", 10, 100, 30)
+        marker_size = st.sidebar.slider("Marker Size", 10, 500, 30)  # Increased max size to 500
         
         st.sidebar.header("Chart Styling")
         chart_style = st.sidebar.selectbox("Seaborn Style", ["whitegrid", "darkgrid", "white", "dark", "ticks"])
@@ -381,36 +439,47 @@ with tab1:
         sns.set_style(chart_style)
 
         st.subheader("Location Map")
-        fig, ax = plt.subplots(figsize=(10, 8))
+        
+        # FIXED MAP DISPLAY ISSUE
+        # Use a more reliable approach to display map tiles
+        fig, ax = plt.subplots(figsize=(10, 8), subplot_kw={'projection': ccrs.PlateCarree()})
+        ax.set_global()
+        
+        # Plot the location marker
         ax.scatter([longitude], [latitude], c=marker_color, s=marker_size, 
-                  edgecolor='white', zorder=2, label="Site Location")
+                  edgecolor='white', zorder=2, label="Site Location", transform=ccrs.PlateCarree())
         
+        # Set map extent based on zoom level
         zoom_factor = 0.02 * (18 / zoom_level)
-        xlim = (longitude - zoom_factor, longitude + zoom_factor)
-        ylim = (latitude - zoom_factor, latitude + zoom_factor)
+        ax.set_extent(
+            [longitude - zoom_factor, longitude + zoom_factor, 
+             latitude - zoom_factor, latitude + zoom_factor],
+            crs=ccrs.PlateCarree()
+        )
         
-        if all(math.isfinite(x) for x in xlim) and all(math.isfinite(y) for y in ylim):
-            ax.set_xlim(xlim)
-            ax.set_ylim(ylim)
-        
-        ax.set_aspect('equal', adjustable='datalim')
+        # Add map tiles based on selection
+        providers = {
+            "OpenStreetMap": ctx.providers.OpenStreetMap.Mapnik,
+            "CartoDB Positron": ctx.providers.CartoDB.Positron,
+            "CartoDB Voyager": ctx.providers.CartoDB.Voyager,
+            "Esri WorldTopoMap": ctx.providers.Esri.WorldTopoMap,
+            "Esri WorldImagery": ctx.providers.Esri.WorldImagery,
+            "OpenTopoMap": ctx.providers.OpenTopoMap,
+            "CyclOSM": ctx.providers.CyclOSM,
+            "Open Infrastructure Map (Power)": ctx.providers.OpenInfraMap.Power
+        }
         
         try:
-            providers = {
-                "OpenStreetMap": xyz.OpenStreetMap.Mapnik,
-                "CartoDB Positron": xyz.CartoDB.Positron,
-                "CartoDB Voyager": xyz.CartoDB.Voyager,
-                "Nasa Terra": xyz.Esri.NatGeoWorldMap,
-                "Nasa Topo": xyz.Esri.WorldTopoMap,
-                "Esri World Imagery": xyz.Esri.WorldImagery,
-                "OpenTopoMap": xyz.OpenTopoMap,
-                "OpenStreetMap (DE)": xyz.OpenStreetMap.DE,
-                "CyclOSM": xyz.CyclOSM,
-                "OpenStreetMap (HOT)": xyz.OpenStreetMap.HOT
-            }
-            ctx.add_basemap(ax, source=providers[map_type], crs="EPSG:4326")
-        except Exception:
-            pass
+            ax.add_image(ctx.providers.Stamen.TerrainBackground, 8)
+            ax.add_image(providers[map_type], 8)
+        except Exception as e:
+            st.warning(f"Could not load map tiles: {str(e)}")
+            # Fallback to Stamen Terrain
+            ax.add_image(ctx.providers.Stamen.TerrainBackground, 8)
+        
+        # Add coastlines and gridlines
+        ax.coastlines(linewidth=0.5)
+        ax.gridlines(draw_labels=True)
         
         ax.set_title("Site Location")
         ax.legend()
@@ -459,7 +528,7 @@ with tab1:
             for col in data_values.columns:
                 sns.lineplot(x=months, y=data_values[col], label=col, linewidth=2.5, ax=ax)
             
-            ax.set_title("Global Horizontal Irradiation (kWh/m脗虏/month)")
+            ax.set_title("Global Horizontal Irradiation (kWh/m²/month)")
             ax.set_xlabel("Month")
             ax.set_ylabel("Irradiation")
             ax.legend(title="Data Sources")
@@ -480,7 +549,7 @@ with tab1:
             for col in data_values.columns:
                 sns.lineplot(x=months, y=data_values[col], label=col, linewidth=2.5, ax=ax)
             
-            ax.set_title("Temperature (脗掳C)")
+            ax.set_title("Temperature (°C)")
             ax.set_xlabel("Month")
             ax.set_ylabel("Degrees")
             ax.legend(title="Data Sources")
@@ -496,8 +565,8 @@ with tab1:
                                     header=25, usecols="G:O", nrows=11)
             prob1_df = prob1_df.apply(lambda x: x.round(2) if x.dtype in ['float64', 'float32'] else x)
             st.markdown("**Scenario 1**")
-            st.dataframe(prob1_df)
             table1_img = create_table_image(prob1_df)
+            st.image(table1_img)
             st.session_state.generated_assets['table1_img'] = table1_img
             st.session_state.generated_assets['table1_df'] = prob1_df
         except Exception:
@@ -508,8 +577,8 @@ with tab1:
                                     header=2, usecols="A:L", nrows=31)
             prob2_df = prob2_df.apply(lambda x: x.round(2) if x.dtype in ['float64', 'float32'] else x)
             st.markdown("**Scenario 2**")
-            st.dataframe(prob2_df)
             table2_img = create_table_image(prob2_df)
+            st.image(table2_img)
             st.session_state.generated_assets['table2_img'] = table2_img
             st.session_state.generated_assets['table2_df'] = prob2_df
         except Exception:
@@ -576,6 +645,87 @@ with tab1:
         except Exception as e:
             st.error(f"Error processing Gaussian distribution data: {str(e)}")
         
+        # ====== CUSTOM TABLE SECTION ======
+        st.subheader("Custom Tables")
+        
+        # Get all sheet names
+        xl = pd.ExcelFile(tmp_path)
+        sheet_names = xl.sheet_names
+        
+        # Table selection interface
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            selected_sheet = st.selectbox("Select Sheet", sheet_names)
+        with col2:
+            start_cell = st.text_input("Start Cell (e.g., B3)", "B3")
+        with col3:
+            end_cell = st.text_input("End Cell (e.g., E21)", "E21")
+        
+        if st.button("Add Table"):
+            try:
+                # Parse cell references
+                def parse_cell(cell):
+                    col = ''.join(filter(str.isalpha, cell))
+                    row = ''.join(filter(str.isdigit, cell))
+                    return col, int(row)
+                
+                start_col, start_row = parse_cell(start_cell)
+                end_col, end_row = parse_cell(end_cell)
+                
+                # Convert Excel column letters to indices
+                def col_to_index(col):
+                    index = 0
+                    for char in col:
+                        index = index * 26 + (ord(char.upper()) - ord('A') + 1)
+                    return index - 1  # 0-indexed
+                
+                start_col_idx = col_to_index(start_col)
+                end_col_idx = col_to_index(end_col)
+                
+                # Calculate number of rows and columns
+                nrows = end_row - start_row + 1
+                skiprows = start_row - 1  # pandas uses 0-indexed rows
+                
+                # Read the table
+                df = pd.read_excel(
+                    tmp_path,
+                    sheet_name=selected_sheet,
+                    skiprows=skiprows,
+                    nrows=nrows,
+                    usecols=f"{start_col}:{end_col}"
+                )
+                
+                # Clean up column names
+                df = df.rename(columns=lambda x: str(x).strip() if isinstance(x, str) else x)
+                
+                # Create table image
+                table_img = create_table_image(df)
+                
+                # Store with consecutive numbering
+                table_idx = st.session_state.table_counter
+                img_key = f'table{table_idx}_img'
+                df_key = f'table{table_idx}_df'
+                
+                st.session_state.generated_assets[img_key] = table_img
+                st.session_state.generated_assets[df_key] = df
+                st.session_state.table_counter += 1
+                
+                st.success(f"Table added as table{table_idx}")
+                st.image(table_img)
+                
+            except Exception as e:
+                st.error(f"Error reading table: {str(e)}")
+        
+        # Display all added tables
+        if st.session_state.table_counter > 1:
+            st.markdown("**Added Tables**")
+            for i in range(1, st.session_state.table_counter):
+                img_key = f'table{i}_img'
+                if img_key in st.session_state.generated_assets:
+                    st.markdown(f"**Table {i}**")
+                    st.image(st.session_state.generated_assets[img_key])
+        # ====== END OF CUSTOM TABLE SECTION ======
+        
         recap_dict = {}
         for i in range(len(recap_df)):
             key = str(recap_df.iloc[i, 0])
@@ -608,6 +758,11 @@ with tab2:
             tpl_path = tmp_tpl.name
         
         try:
+            # Build list of all assets (charts and tables)
+            asset_keys = ['chart1', 'chart2', 'chart3', 'chart4', 'chart5', 'chart6']
+            for i in range(1, st.session_state.table_counter):
+                asset_keys.append(f'table{i}_img')
+            
             if output_format == ".docx":
                 doc = docx.Document(tpl_path)
                 
@@ -615,7 +770,7 @@ with tab2:
                 
                 charts_inserted = 0
                 tables_inserted = 0
-                for asset_key in ['chart1', 'chart2', 'chart3', 'chart4', 'chart5', 'chart6', 'table1_img', 'table2_img']:
+                for asset_key in asset_keys:
                     if asset_key in st.session_state.generated_assets:
                         placeholder = search_docx_for_placeholder(doc, f"{{{asset_key}}}")
                         
@@ -623,14 +778,15 @@ with tab2:
                             st.warning(f"Placeholder {{{asset_key}}} not found in DOCX")
                             continue
                             
-                        if asset_key in ['table1_img', 'table2_img'] and st.session_state.use_native_tables:
+                        if asset_key.startswith('table') and st.session_state.use_native_tables:
                             table_key = asset_key.replace('_img', '_df')
                             if table_key in st.session_state.generated_assets:
                                 df = st.session_state.generated_assets[table_key]
                                 try:
                                     add_native_table_to_docx(doc, placeholder, df)
                                     tables_inserted += 1
-                                except Exception:
+                                except Exception as e:
+                                    st.error(f"Error adding native table: {str(e)}")
                                     insert_image(doc, placeholder, asset_key)
                                     tables_inserted += 1
                             else:
@@ -662,7 +818,7 @@ with tab2:
                 
                 charts_inserted = 0
                 tables_inserted = 0
-                for asset_key in ['chart1', 'chart2', 'chart3', 'chart4', 'chart5', 'chart6', 'table1_img', 'table2_img']:
+                for asset_key in asset_keys:
                     if asset_key in st.session_state.generated_assets:
                         slide, placeholder_shape = search_pptx_for_placeholder(prs, f"{{{asset_key}}}")
                         
@@ -670,14 +826,15 @@ with tab2:
                             st.warning(f"Placeholder {{{asset_key}}} not found in PPTX")
                             continue
                             
-                        if asset_key in ['table1_img', 'table2_img'] and st.session_state.use_native_tables:
+                        if asset_key.startswith('table') and st.session_state.use_native_tables:
                             table_key = asset_key.replace('_img', '_df')
                             if table_key in st.session_state.generated_assets:
                                 df = st.session_state.generated_assets[table_key]
                                 try:
                                     add_native_table_to_pptx(slide, placeholder_shape, df)
                                     tables_inserted += 1
-                                except Exception:
+                                except Exception as e:
+                                    st.error(f"Error adding native table: {str(e)}")
                                     insert_image_pptx(slide, placeholder_shape, asset_key)
                                     tables_inserted += 1
                             else:
