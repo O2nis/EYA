@@ -9,3 +9,4 @@ plotly
 seaborn
 contextily
 requests
+cartopy
